@@ -1,0 +1,67 @@
+# Vector Pac-Man - Linux/Raspberry Pi Makefile
+#
+# Prerequisites:
+#   sudo apt install build-essential libsdl2-dev
+#
+# Usage:
+#   make -f makefile.linux              # builds both pacman_sdl and pacman_dvg
+#   make -f makefile.linux sdl          # SDL/OpenGL renderer only
+#   make -f makefile.linux dvg          # DVG renderer only
+#   make -f makefile.linux clean
+
+CXX = g++
+
+CXXFLAGS_COMMON = -std=c++17 -O2 -Wall \
+           -Wno-unused-variable -Wno-unused-but-set-variable \
+           -Wno-write-strings \
+           $(shell sdl2-config --cflags)
+
+CXXFLAGS_SDL = $(CXXFLAGS_COMMON)
+CXXFLAGS_DVG = $(CXXFLAGS_COMMON) -DUSE_DVG_RENDERER
+
+LDFLAGS =
+LIBS_SDL = $(shell sdl2-config --libs) -lGL -lGLU -lm
+LIBS_DVG = $(shell sdl2-config --libs) -lm
+
+SRCS = \
+	main.cpp \
+	renderer.cpp \
+	renderer_dvg.cpp \
+	dvg_serial_linux.cpp \
+	settings.cpp \
+	sound.cpp \
+	game.cpp
+
+OBJDIR_SDL = obj_sdl
+OBJDIR_DVG = obj_dvg
+OBJS_SDL = $(patsubst %.cpp,$(OBJDIR_SDL)/%.o,$(SRCS))
+OBJS_DVG = $(patsubst %.cpp,$(OBJDIR_DVG)/%.o,$(SRCS))
+
+all: sdl dvg
+
+sdl: $(OBJDIR_SDL) pacman_sdl
+
+dvg: $(OBJDIR_DVG) pacman_dvg
+
+$(OBJDIR_SDL):
+	mkdir -p $(OBJDIR_SDL)
+
+$(OBJDIR_DVG):
+	mkdir -p $(OBJDIR_DVG)
+
+pacman_sdl: $(OBJS_SDL)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LIBS_SDL)
+
+pacman_dvg: $(OBJS_DVG)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LIBS_DVG)
+
+$(OBJDIR_SDL)/%.o: %.cpp
+	$(CXX) $(CXXFLAGS_SDL) -c $< -o $@
+
+$(OBJDIR_DVG)/%.o: %.cpp
+	$(CXX) $(CXXFLAGS_DVG) -c $< -o $@
+
+clean:
+	rm -rf $(OBJDIR_SDL) $(OBJDIR_DVG) pacman_sdl pacman_dvg
+
+.PHONY: all sdl dvg clean
