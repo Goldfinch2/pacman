@@ -1,4 +1,14 @@
 #include "game.h"
+#include "controls.hpp"
+#include "players.hpp"
+#include "enemies.hpp"
+#include "entityPacman.hpp"
+#include "entityGhost.hpp"
+#include "entityBlinky.hpp"
+#include "entityPinky.hpp"
+#include "entityInky.hpp"
+#include "entityClyde.hpp"
+#include "entityFruit.hpp"
 #include "renderer.h"
 #include "pacdefs.h"
 #include "pac_char_set.h"
@@ -9,35 +19,7 @@
 // Static game mode
 game::GameMode game::mGameMode = game::GAMEMODE_ATTRACT;
 
-// ============================================================
-// Image structure types (same as original)
-// ============================================================
-
-typedef struct {
-    uint32_t width, height;
-    uint32_t *bmp[4][3];
-} pacman_img_t;
-
-typedef struct {
-    uint32_t width, height;
-    uint32_t *bmp[13];
-} pacdead_img_t;
-
-typedef struct {
-    uint32_t width, height;
-    uint32_t *bmp[8];
-} fruit_img_t;
-
-typedef struct {
-    uint32_t width, height;
-    uint32_t *bmp[4][4];
-} ghost_img_t;
-
-typedef struct {
-    uint32_t width, height;
-    uint32_t *bmp[4];
-} ghost_counter_img_t;
-
+// char_set is local only — not needed by entities
 typedef struct {
     uint32_t width, height;
     uint32_t *bmp[128];
@@ -47,7 +29,7 @@ typedef struct {
 // Fruit table
 // ============================================================
 
-static FruitInfo s_fruit[] = {
+FruitInfo game::sFruitTable[] = {
     {1, 1,    CHERRY,     100, 16, 7, s_cnt_100_img},
     {2, 2,    STRAWBERRY, 300, 16, 7, s_cnt_300_img},
     {3, 4,    PEAR,       500, 16, 7, s_cnt_500_img},
@@ -59,16 +41,16 @@ static FruitInfo s_fruit[] = {
 };
 
 // ============================================================
-// Image tables (same as original)
+// Image tables
 // ============================================================
 
-static fruit_img_t s_fruit_img = {
+fruit_img_t game::sFruitImg = {
     12, 12,
     { s_cherry_img, s_straw_img, s_pear_img, s_apple_img,
       s_jack_img, s_eagle_img, s_bell_img, s_key_img }
 };
 
-static pacman_img_t s_pacman_img = {
+pacman_img_t game::sPacmanImg = {
     14, 14,
     {
         { s_pac_right1_img, s_pac_right2_img, s_pac_right3_img },
@@ -78,7 +60,7 @@ static pacman_img_t s_pacman_img = {
     }
 };
 
-static ghost_img_t s_ghost_img = {
+ghost_img_t game::sGhostImg = {
     14, 14,
     {
         { s_blinky_right_img, s_blinky_left_img, s_blinky_up_img, s_blinky_down_img },
@@ -88,7 +70,7 @@ static ghost_img_t s_ghost_img = {
     }
 };
 
-static ghost_img_t s_ghost_dead_img = {
+ghost_img_t game::sGhostDeadImg = {
     14, 14,
     {
         { s_ghost_dead_right_img, s_ghost_dead_left_img, s_ghost_dead_up_img, s_ghost_dead_down_img },
@@ -96,7 +78,7 @@ static ghost_img_t s_ghost_dead_img = {
     }
 };
 
-static ghost_img_t s_ghost_scared_img = {
+ghost_img_t game::sGhostScaredImg = {
     14, 14,
     {
         { s_ghost_scared1_img, s_ghost_scared1_img, s_ghost_scared2_img, s_ghost_scared2_img },
@@ -104,7 +86,7 @@ static ghost_img_t s_ghost_scared_img = {
     }
 };
 
-static pacdead_img_t s_pacdead_img = {
+pacdead_img_t game::sPacDeadImg = {
     14, 14,
     {
         s_pac_right3_img,
@@ -115,7 +97,7 @@ static pacdead_img_t s_pacdead_img = {
     }
 };
 
-static ghost_counter_img_t s_ghostcounter_img = {
+ghost_counter_img_t game::sGhostCounterImg = {
     16, 7,
     { s_ghost_counter1_img, s_ghost_counter2_img, s_ghost_counter3_img, s_ghost_counter4_img }
 };
@@ -278,6 +260,10 @@ static uint32_t s_energizer[] = {
 // ============================================================
 
 game::game()
+    : mControls(nullptr)
+    , mPlayers(nullptr)
+    , mEnemies(nullptr)
+    , mFruit(nullptr)
 {
     mGameMode = GAMEMODE_ATTRACT;
     mScore = 0;
@@ -286,14 +272,31 @@ game::game()
     mLevel = 1;
     mStateTimer = 0;
     mFrameCounter = 0;
-    mKeyRight = mKeyLeft = mKeyUp = mKeyDown = false;
-    mKeyStart = mKeyCoin = false;
+    mGlobalMode = 1;
+    mEnergizerTimer = 0;
+    mFoodEaten = 0;
+    mGhostFrame = 0;
+    mBoundary = 5;
+    mCornering = 2;
 }
 
-game::~game() {}
+game::~game()
+{
+    delete mFruit;
+    delete mEnemies;
+    delete mPlayers;
+    delete mControls;
+}
 
 void game::init()
 {
+    // Create subsystems (opengw pattern: game owns managers)
+    mControls = new controls();
+    mPlayers  = new players(*this);
+    mEnemies  = new enemies(*this);
+    mFruit    = new entityFruit(*this);
+
+    // Load sounds
     mSound.loadTrack("sounds/start.wav",      SND_START,      0.5f, false);
     mSound.loadTrack("sounds/chomp.wav",       SND_CHOMP,      0.3f, false);
     mSound.loadTrack("sounds/eat_fruit.wav",   SND_EAT_FRUIT,  0.5f, false);
@@ -307,22 +310,26 @@ void game::init()
 }
 
 // ============================================================
-// Input reading from SDL keyboard state
+// Entity accessors
 // ============================================================
 
-void game::readInput()
+entityPacman* game::getPacman()
 {
-    const Uint8* keys = SDL_GetKeyboardState(nullptr);
-    mKeyRight = keys[SDL_SCANCODE_RIGHT] != 0;
-    mKeyLeft  = keys[SDL_SCANCODE_LEFT] != 0;
-    mKeyUp    = keys[SDL_SCANCODE_UP] != 0;
-    mKeyDown  = keys[SDL_SCANCODE_DOWN] != 0;
-    mKeyStart = keys[SDL_SCANCODE_RETURN] != 0 || keys[SDL_SCANCODE_SPACE] != 0 || keys[SDL_SCANCODE_LCTRL] != 0;
-    mKeyCoin  = keys[SDL_SCANCODE_5] != 0;
+    return mPlayers->getPacman();
+}
+
+entityBlinky* game::getBlinky()
+{
+    return mEnemies->getBlinky();
+}
+
+entityGhost* game::getGhost(int index)
+{
+    return mEnemies->getGhost(index);
 }
 
 // ============================================================
-// Helper functions (ported directly from original)
+// Helper functions
 // ============================================================
 
 int32_t game::wrapMapX(int32_t x) {
@@ -365,221 +372,61 @@ int32_t game::yDir(uint32_t a) {
 }
 
 int32_t game::levelToFruitIndex(uint32_t level) {
-    for (uint32_t i = 0; i < ARRAY_SIZE(s_fruit); i++) {
-        if (level >= s_fruit[i].min_level && level <= s_fruit[i].max_level)
+    for (uint32_t i = 0; i < ARRAY_SIZE(sFruitTable); i++) {
+        if (level >= sFruitTable[i].min_level && level <= sFruitTable[i].max_level)
             return (int32_t)i;
     }
     return -1;
 }
 
-void game::snapY() {
-    int32_t a = wrapMapY((mPacY + 3) >> 3);
-    int32_t b = wrapMapX(mPacX >> 3);
-    if (mMap[a][b] == TILE_WALL) mPacY--;
-    a = wrapMapY((mPacY - 4) >> 3);
-    b = wrapMapX(mPacX >> 3);
-    if (mMap[a][b] == TILE_WALL) mPacY++;
-}
-
-void game::snapX() {
-    int32_t a = wrapMapY(mPacY >> 3);
-    int32_t b = wrapMapX((mPacX + 3) >> 3);
-    if (mMap[a][b] == TILE_WALL) mPacX--;
-    a = wrapMapY(mPacY >> 3);
-    b = wrapMapX((mPacX - 4) >> 3);
-    if (mMap[a][b] == TILE_WALL) mPacX++;
-}
-
 // ============================================================
-// Ghost logic
+// Food logic
 // ============================================================
-
-void game::initGhost(uint32_t ghost, uint32_t x, uint32_t y, uint32_t dir, uint32_t mode, bool scared, uint32_t speed) {
-    mGhosts[ghost].x = x;
-    mGhosts[ghost].y = y;
-    mGhosts[ghost].dir = dir;
-    mGhosts[ghost].mode = mode;
-    mGhosts[ghost].scared = scared;
-    mGhosts[ghost].speed = speed;
-}
-
-void game::resetGhost(uint32_t ghost, uint32_t time) {
-    if (mGhosts[ghost].mode < GHOST_TRAPPED) {
-        mGhosts[ghost].mode = 4 + time;
-        mGhosts[ghost].x = 112;
-        mGhosts[ghost].y = 96;
-    }
-}
-
-void game::frighten(uint32_t ghost) {
-    mGhosts[ghost].scared = true;
-}
-
-void game::reverseDirection(uint32_t ghost) {
-    if (mGhosts[ghost].dir == DIR_RIGHT) mGhosts[ghost].dir = DIR_LEFT;
-    else if (mGhosts[ghost].dir == DIR_LEFT) mGhosts[ghost].dir = DIR_RIGHT;
-    else if (mGhosts[ghost].dir == DIR_UP) mGhosts[ghost].dir = DIR_DOWN;
-    else mGhosts[ghost].dir = DIR_UP;
-}
 
 void game::eatFood() {
     mFoodEaten++;
     if (mFoodEaten == 70 || mFoodEaten == 170)
-        mCherry = true;
+        mFruit->activate();
     if (mFoodEaten == 30)
-        mGhosts[INKY].mode = GHOST_RELEASED;
+        mEnemies->getInky()->setMode(entityGhost::MODE_RELEASED);
     if (mFoodEaten == 82)
-        mGhosts[CLYDE].mode = GHOST_RELEASED;
+        mEnemies->getClyde()->setMode(entityGhost::MODE_RELEASED);
 }
 
-void game::processGhost(uint32_t ghost) {
-    uint32_t targetX = 0, targetY = 0;
-    bool tunnel = inTunnel(mGhosts[ghost].x, mGhosts[ghost].y);
+// ============================================================
+// Collision detection (game mediates between entities)
+// ============================================================
 
-    if (mEnergizerTimer == 0 && mGhosts[ghost].scared)
-        mGhosts[ghost].scared = false;
+void game::checkCollisions()
+{
+    entityPacman* pac = getPacman();
 
-    // Collision with pac-man
-    if (((mPacX >> 3) == (mGhosts[ghost].x + 4) >> 3) && ((mPacY >> 3) == (mGhosts[ghost].y + 4) >> 3)) {
-        if (mGhosts[ghost].scared) {
-            mGhosts[ghost].mode = GHOST_DEAD;
-            mGhosts[ghost].scared = false;
-            mGhosts[ghost].x &= 0xfffffffe;
-            mGhosts[ghost].y &= 0xfffffffe;
-            mPacGhostCounter++;
-            if (mPacGhostCounter > 4) mPacGhostCounter = 1;
-            mScore += 100 << mPacGhostCounter;
-            mPacEatGhost = 40;
-            mSound.playTrack(SND_EAT_GHOST);
-            mSound.stopTrack(SND_FRIGHTENED);
-            mSound.playTrack(SND_GHOST_EYES);
-        } else if (mGhosts[ghost].mode != GHOST_DEAD) {
-            mPacDead = 75;  // animation length; mStateTimer drives the phases
-            mStateTimer = 0;
-            resetGhost(BLINKY, 0);
-            resetGhost(PINKY, 10);
-            resetGhost(INKY, 20);
-            resetGhost(CLYDE, 30);
-            mSound.stopAllTracks();
-        }
-    }
+    for (int i = 0; i < enemies::NUM_GHOSTS; i++) {
+        entityGhost* ghost = getGhost(i);
+        if (!ghost->getEnabled()) continue;
 
-newDir:
-    if (mGhosts[ghost].x % 8 == 0 && mGhosts[ghost].y % 8 == 0 && !tunnel) {
-        if (mGhosts[ghost].scared) {
-            targetX = rand() % 28;
-            targetY = rand() % 31;
-        } else if (mGhosts[ghost].mode == GHOST_NORMAL) {
-            if (mGlobalMode == 0) {
-                // Scatter
-                if (ghost == PINKY)  { targetX = 3; targetY = 0; }
-                if (ghost == BLINKY) { targetX = 25; targetY = 0; }
-                if (ghost == INKY)   { targetX = 28; targetY = 31; }
-                if (ghost == CLYDE)  { targetX = 0; targetY = 31; }
-            } else {
-                // Chase
-                targetX = mPacX >> 3;
-                targetY = mPacY >> 3;
-                if (ghost == PINKY) {
-                    targetX += xDir(mPacDir) << 2;
-                    targetY += yDir(mPacDir) << 2;
-                }
-                if (ghost == CLYDE) {
-                    uint32_t distance = (mGhosts[ghost].y / 8 - (mPacY >> 3)) * (mGhosts[ghost].y / 8 - (mPacY >> 3)) +
-                                        (mGhosts[ghost].x / 8 - 1 - (mPacX >> 3)) * (mGhosts[ghost].x / 8 - 1 - (mPacX >> 3));
-                    if (distance < 64) { targetX = 0; targetY = 31; }
-                }
-                if (ghost == INKY) {
-                    uint32_t xd, yd;
-                    targetX += xDir(mPacDir) << 1;
-                    targetY += yDir(mPacDir) << 1;
-                    xd = mGhosts[BLINKY].x >> 3;
-                    yd = mGhosts[BLINKY].y >> 3;
-                    xd -= targetX;
-                    yd -= targetY;
-                    xd = xd << 1;
-                    yd = yd << 1;
-                    targetX -= xd;
-                    targetY -= yd;
-                }
+        if (((pac->getX() >> 3) == (ghost->getX() + 4) >> 3) &&
+            ((pac->getY() >> 3) == (ghost->getY() + 4) >> 3))
+        {
+            if (ghost->isScared()) {
+                ghost->setMode(entityGhost::MODE_DEAD);
+                ghost->setScared(false);
+                ghost->setPos(ghost->getX() & 0xfffffffe, ghost->getY() & 0xfffffffe);
+                uint32_t cnt = pac->getGhostCounter() + 1;
+                if (cnt > 4) cnt = 1;
+                pac->setGhostCounter(cnt);
+                mScore += 100 << cnt;
+                pac->setEatGhost(40);
+                mSound.playTrack(SND_EAT_GHOST);
+                mSound.stopTrack(SND_FRIGHTENED);
+                mSound.playTrack(SND_GHOST_EYES);
+            } else if (ghost->getMode() != entityGhost::MODE_DEAD) {
+                pac->setDead(75);
+                mStateTimer = 0;
+                mEnemies->resetAll();
+                mSound.stopAllTracks();
             }
         }
-        if (mGhosts[ghost].mode == GHOST_DEAD) {
-            targetX = 14; targetY = 11;
-            if (mGhosts[ghost].x >> 3 == 13 && mGhosts[ghost].y >> 3 == 11) {
-                mGhosts[ghost].mode = GHOST_TRAPPED + 30;
-                mGhosts[ghost].y++;
-                mGhosts[ghost].dir = DIR_DOWN;
-                goto newDir;
-            }
-        }
-        if (mGhosts[ghost].mode == GHOST_RELEASED) {
-            targetX = 13; targetY = 11;
-            if (mGhosts[ghost].y >> 3 == 13 && mGhosts[ghost].x >> 3 == 13) {
-                mGhosts[ghost].mode = GHOST_NORMAL;
-                mGhosts[ghost].dir = DIR_UP;
-                mGhosts[ghost].y--;
-            }
-        }
-        if (mGhosts[ghost].mode >= GHOST_TRAPPED) {
-            if (mGhosts[ghost].mode < 255) mGhosts[ghost].mode--;
-            targetY = 14; targetX = 13;
-            if (ghost == INKY) targetX = 11;
-            if (ghost == CLYDE) targetX = 15;
-        }
-
-        // Find best direction (shortest euclidean distance to target)
-        uint32_t distR = 10000, distL = 10000, distU = 10000, distD = 10000, minimum = 10000;
-        int32_t y, x;
-
-        y = wrapMapY(mGhosts[ghost].y >> 3);
-        x = wrapMapX((mGhosts[ghost].x >> 3) + 1);
-        if (mGhosts[ghost].dir != DIR_LEFT && mMap[y][x] != TILE_WALL) {
-            distR = (mGhosts[ghost].y/8 - targetY)*(mGhosts[ghost].y/8 - targetY) + (mGhosts[ghost].x/8 + 1 - targetX)*(mGhosts[ghost].x/8 + 1 - targetX);
-            if (distR < minimum) minimum = distR;
-        }
-        y = wrapMapY(mGhosts[ghost].y >> 3);
-        x = wrapMapX((mGhosts[ghost].x >> 3) - 1);
-        if (mGhosts[ghost].dir != DIR_RIGHT && mMap[y][x] != TILE_WALL) {
-            distL = (mGhosts[ghost].y/8 - targetY)*(mGhosts[ghost].y/8 - targetY) + (mGhosts[ghost].x/8 - 1 - targetX)*(mGhosts[ghost].x/8 - 1 - targetX);
-            if (distL < minimum) minimum = distL;
-        }
-        y = wrapMapY((mGhosts[ghost].y >> 3) - 1);
-        x = wrapMapX(mGhosts[ghost].x >> 3);
-        if (mGhosts[ghost].dir != DIR_DOWN && mMap[y][x] != TILE_WALL) {
-            distU = (mGhosts[ghost].y/8 - 1 - targetY)*(mGhosts[ghost].y/8 - 1 - targetY) + (mGhosts[ghost].x/8 - targetX)*(mGhosts[ghost].x/8 - targetX);
-            if (distU < minimum) minimum = distU;
-        }
-        y = wrapMapY((mGhosts[ghost].y >> 3) + 1);
-        x = wrapMapX(mGhosts[ghost].x >> 3);
-        if (mGhosts[ghost].dir != DIR_UP && mMap[y][x] != TILE_WALL) {
-            distD = (mGhosts[ghost].y/8 + 1 - targetY)*(mGhosts[ghost].y/8 + 1 - targetY) + (mGhosts[ghost].x/8 - targetX)*(mGhosts[ghost].x/8 - targetX);
-            if (distD < minimum) minimum = distD;
-        }
-
-        if (distU == minimum) mGhosts[ghost].dir = DIR_UP;
-        else if (distR == minimum) mGhosts[ghost].dir = DIR_RIGHT;
-        else if (distD == minimum) mGhosts[ghost].dir = DIR_DOWN;
-        else if (distL == minimum) mGhosts[ghost].dir = DIR_LEFT;
-    }
-
-    // Speed control
-    uint32_t doubleSpeed = 1, speed = 9;
-    if (tunnel) speed = 5;
-    if (mGhosts[ghost].scared) speed = 6;
-    if ((mGhosts[ghost].x % 8) == 0 && (mGhosts[ghost].y % 8) == 0) speed = 10;
-    if (mGhosts[ghost].mode == GHOST_DEAD) { doubleSpeed = 2; speed = 10; }
-
-    while (doubleSpeed--) {
-        mGhosts[ghost].speed += speed;
-        if (mGhosts[ghost].speed > 9) {
-            if (mGhosts[ghost].dir == DIR_RIGHT) mGhosts[ghost].x++;
-            if (mGhosts[ghost].dir == DIR_LEFT)  mGhosts[ghost].x--;
-            if (mGhosts[ghost].dir == DIR_UP)    mGhosts[ghost].y--;
-            if (mGhosts[ghost].dir == DIR_DOWN)   mGhosts[ghost].y++;
-            mGhosts[ghost].speed -= 10;
-        }
-        mGhosts[ghost].x = wrap(mGhosts[ghost].x);
     }
 }
 
@@ -588,24 +435,22 @@ newDir:
 // ============================================================
 
 void game::initLevel(bool fullReset) {
-    initGhost(BLINKY, 112, 88, 0, 0, false, 0);
-    initGhost(PINKY,  112, 96, 0, 4, false, 0);
-    initGhost(INKY,   112, 96, 0, 255, false, 0);
-    initGhost(CLYDE,  112, 96, 0, 255, false, 0);
+    mEnemies->initAll();
+    getPacman()->resetPosition();
+    getPacman()->setDead(0);
+    getPacman()->setEatGhost(0);
+    getPacman()->setGhostCounter(0);
+    getPacman()->setState(entity::ENTITY_STATE_RUNNING);
+
     mBoundary = 5;
     mCornering = 2;
-    mPacX = 112;
-    mPacY = 188;
-    mPacDir = DIR_LEFT;
-    mPacFrame = 6;  // start with mouth closed (frame index 6/3 = 2)
     mFoodEaten = 0;
-    mPacDead = 0;
-    mPacEatGhost = 0;
-    mPacGhostCounter = 0;
     mGlobalMode = 1; // chase
-    mCherry = false;
-    mCherryTimer = 0;
     mEnergizerTimer = 0;
+
+    delete mFruit;
+    mFruit = new entityFruit(*this);
+
     if (fullReset) {
         mScore = 0;
         mLives = 4;
@@ -616,12 +461,197 @@ void game::initLevel(bool fullReset) {
 }
 
 // ============================================================
+// Main frame logic
+// ============================================================
+
+void game::runFrame() {
+    entityPacman* pac = getPacman();
+
+    // Death sequence
+    if (pac->getDead() != 0) {
+        mStateTimer++;
+
+        if (mStateTimer == 20)
+            mSound.playTrack(SND_DEATH);
+
+        if (mStateTimer <= 30)
+            return;
+
+        if (pac->getDead() > 1) {
+            pac->setDead(pac->getDead() - 1);
+            return;
+        }
+
+        if (mSound.isTrackPlaying(SND_DEATH))
+            return;
+
+        if (pac->getDead() == 1) {
+            pac->setDead(-60);
+            return;
+        }
+        if (pac->getDead() < -1) {
+            pac->setDead(pac->getDead() + 1);
+            return;
+        }
+
+        // Done — transition
+        pac->setDead(0);
+        if (mLives) mLives--;
+        if (mLives == 0) {
+            mGameMode = GAMEMODE_GAMEOVER;
+            mStateTimer = 0;
+        } else {
+            pac->resetPosition();
+            mEnergizerTimer = 0;
+            mEnemies->initAll();
+            mGameMode = GAMEMODE_READY;
+            mStateTimer = 0;
+        }
+        return;
+    }
+
+    // Eating ghost pause
+    if (pac->getEatGhost() > 0) {
+        pac->setEatGhost(pac->getEatGhost() - 1);
+        return;
+    }
+
+    // Check food/energizer at pacman position
+    uint8_t temp = mMap[pac->getY() >> 3][pac->getX() >> 3];
+    if (temp == TILE_FOOD) {
+        mMap[pac->getY() >> 3][pac->getX() >> 3] = TILE_EMPTY;
+        mScore += 10;
+        mSound.playTrack(SND_CHOMP);
+        eatFood();
+    } else if (temp == TILE_ENERGIZER) {
+        mMap[pac->getY() >> 3][pac->getX() >> 3] = TILE_EMPTY;
+        mScore += 50;
+        mEnemies->frightenAll();
+        mEnemies->reverseAll();
+        mEnergizerTimer = ENERGY_LENGTH;
+        mSound.stopTrack(SND_SIREN);
+        mSound.playTrack(SND_FRIGHTENED);
+        eatFood();
+    } else if (mFruit->isActive() && pac->getX() == 112 && pac->getY() == 140) {
+        int32_t index = levelToFruitIndex(mLevel);
+        if (index != -1) mScore += sFruitTable[index].score;
+        // Deactivate fruit, show score
+        delete mFruit;
+        mFruit = new entityFruit(*this);
+        mFruit->setScoreTimer(75);
+        mSound.playTrack(SND_EAT_FRUIT);
+    } else {
+        // Movement handled by pacman entity
+        mPlayers->run();
+    }
+
+    // Energizer timer
+    if (!mEnergizerTimer) {
+        pac->setGhostCounter(0);
+    } else {
+        mEnergizerTimer--;
+        if (mEnergizerTimer == 0) {
+            mSound.stopTrack(SND_FRIGHTENED);
+            mSound.stopTrack(SND_GHOST_EYES);
+            mSound.playTrack(SND_SIREN);
+        }
+    }
+
+    // Process ghosts via enemy manager
+    mEnemies->run();
+
+    // Collision detection (game mediates)
+    checkCollisions();
+
+    // Update high score
+    if (mScore > mHighScore) mHighScore = mScore;
+
+    // Level complete check
+    if (mFoodEaten >= TOTAL_DOTS) {
+        mGameMode = GAMEMODE_LEVEL_COMPLETE;
+        mStateTimer = 0;
+    }
+
+    mGhostFrame = (mGhostFrame + 1) % (8 * 2);
+
+    // Fruit timer
+    mFruit->run();
+}
+
+// ============================================================
+// Game state machine
+// ============================================================
+
+void game::run() {
+    mControls->update();
+    mFrameCounter++;
+
+    switch (mGameMode) {
+        case GAMEMODE_ATTRACT:
+            if (mControls->startButton()) {
+                initLevel(true);
+                mSound.stopAllTracks();
+                mSound.playTrack(SND_START);
+                mGameMode = GAMEMODE_READY;
+                mStateTimer = 0;
+            }
+            break;
+
+        case GAMEMODE_READY:
+            mStateTimer++;
+            if (mSound.isTrackPlaying(SND_START)) {
+                mStateTimer = 0;
+            } else if (mStateTimer > 60) {
+                mGameMode = GAMEMODE_PLAYING;
+                mSound.playTrack(SND_SIREN);
+            }
+            break;
+
+        case GAMEMODE_PLAYING:
+            runFrame();
+            break;
+
+        case GAMEMODE_DEAD:
+            runFrame();
+            break;
+
+        case GAMEMODE_LEVEL_COMPLETE:
+            mStateTimer++;
+            if (mStateTimer == 1)
+                mSound.stopAllTracks();
+            if (mStateTimer > 180) {
+                mLevel++;
+                initLevel(false);
+                mGameMode = GAMEMODE_READY;
+                mStateTimer = 0;
+            }
+            break;
+
+        case GAMEMODE_GAMEOVER:
+            mStateTimer++;
+            if (mStateTimer == 1)
+                mSound.stopAllTracks();
+            if (mControls->startButton() && mStateTimer > 60) {
+                initLevel(true);
+                mSound.playTrack(SND_START);
+                mGameMode = GAMEMODE_READY;
+                mStateTimer = 0;
+            }
+            break;
+    }
+}
+
+// ============================================================
+// Scroll
+// ============================================================
+
+// ============================================================
 // Rendering: Bitmap-to-vector scan conversion
 // ============================================================
 
 void game::drawBitmap(int32_t px, int32_t py, uint32_t* list, uint32_t width, uint32_t height) {
     if (!list) return;
-    if (px < 0) px = PACMAN_MAX_X + px;  // X wrap for tunnel sprites
+    if (px < 0) px = PACMAN_MAX_X + px;
 
     renderer::beginLines();
     for (uint32_t i = 0; i < height; i++) {
@@ -636,7 +666,6 @@ void game::drawBitmap(int32_t px, int32_t py, uint32_t* list, uint32_t width, ui
             uint32_t color = list[i * width + j];
 
             if (color != last_color) {
-                // End previous run
                 if (last_color != 0 && last_color != (uint32_t)-1) {
                     float ex = (float)(px + j);
                     float cr = ((last_color >> 16) & 0xff) / 255.0f;
@@ -649,7 +678,6 @@ void game::drawBitmap(int32_t px, int32_t py, uint32_t* list, uint32_t width, ui
                 last_color = color;
             }
         }
-        // Finish last run on this row
         if (last_color != 0 && last_color != (uint32_t)-1) {
             float ex = (float)(px + width);
             if (ex > PACMAN_MAX_X) ex = PACMAN_MAX_X;
@@ -664,7 +692,7 @@ void game::drawBitmap(int32_t px, int32_t py, uint32_t* list, uint32_t width, ui
 }
 
 // ============================================================
-// Draw string using bitmap font
+// Draw string
 // ============================================================
 
 void game::drawStr(int32_t px, int32_t py, const char* str) {
@@ -707,7 +735,7 @@ void game::drawReadyText() {
 }
 
 // ============================================================
-// Rendering: Maze background (TRUE VECTOR)
+// Rendering: Maze background
 // ============================================================
 
 void game::drawBackground() {
@@ -730,7 +758,7 @@ void game::drawBackground() {
         renderer::endLineStrip();
     }
 
-    // Ghost house door in white (top and bottom edges)
+    // Ghost house door
     renderer::beginLineStrip();
     renderer::stripVertex(104.0f, 100.0f, 1.0f, 1.0f, 1.0f, 1.0f);
     renderer::stripVertex(105.0f, 101.0f, 1.0f, 1.0f, 1.0f, 1.0f);
@@ -749,7 +777,7 @@ void game::drawBackground() {
 }
 
 // ============================================================
-// Rendering: Food dot (TRUE VECTOR - single bright point)
+// Rendering: Food dot
 // ============================================================
 
 void game::drawDot(int32_t px, int32_t py) {
@@ -760,20 +788,6 @@ void game::drawDot(int32_t px, int32_t py) {
     renderer::endPoints();
 }
 
-// ============================================================
-// Rendering: Ghost
-// ============================================================
-
-void game::drawGhost(uint32_t ghost) {
-    uint32_t* bmp = s_ghost_img.bmp[ghost][mGhosts[ghost].dir];
-    if (mGhosts[ghost].scared) {
-        bmp = s_ghost_scared_img.bmp[0][mGhostFrame / 8 + (mEnergizerTimer < 128 && (mEnergizerTimer % 32) < 16 ? 2 : 0)];
-    }
-    if (mGhosts[ghost].mode == GHOST_DEAD) {
-        bmp = s_ghost_dead_img.bmp[0][mGhosts[ghost].dir];
-    }
-    drawBitmap(mGhosts[ghost].x - 2, mGhosts[ghost].y - 2, bmp, 14, 14);
-}
 
 // ============================================================
 // Rendering: Score
@@ -782,7 +796,6 @@ void game::drawGhost(uint32_t ghost) {
 void game::drawScore() {
     char buf[64];
 
-    // "1UP" blinks when playing (~2 blinks/sec), solid otherwise
     if (mGameMode == GAMEMODE_PLAYING) {
         if ((mFrameCounter / 15) & 1)
             drawStr(16, -18, "1UP");
@@ -792,11 +805,8 @@ void game::drawScore() {
     snprintf(buf, sizeof(buf), "%u", mScore);
     drawStr(32, -8, buf);
 
-    // "HIGH SCORE" centered at top
     drawStr(72, -18, "HIGH SCORE");
     snprintf(buf, sizeof(buf), "%u", mHighScore);
-    // Right-align value so last digit is under "O" of SCORE
-    // "HIGH SCORE" at X=72, "O" is char index 7 → center at X = 72 + 2 + 7*8 + 4 = 134
     uint32_t len = strlen(buf);
     int32_t hx = 126 - (int32_t)(len * s_char_set_img.width);
     drawStr(hx, -8, buf);
@@ -807,16 +817,15 @@ void game::drawScore() {
 // ============================================================
 
 void game::drawLives() {
-    // Draw from center-left, expanding leftward, mouth facing left
     int32_t x = 100;
     for (uint32_t i = 0; i < mLives && i < 5; i++) {
-        drawBitmap(x, 252, s_pacman_img.bmp[DIR_LEFT][1], s_pacman_img.width, s_pacman_img.height);
-        x -= s_pacman_img.width + 2;
+        drawBitmap(x, 252, sPacmanImg.bmp[DIR_LEFT][1], sPacmanImg.width, sPacmanImg.height);
+        x -= sPacmanImg.width + 2;
     }
 }
 
 // ============================================================
-// Rendering: Level indicator (fruit icons)
+// Rendering: Level indicator
 // ============================================================
 
 void game::drawLevel() {
@@ -824,7 +833,7 @@ void game::drawLevel() {
     for (uint32_t i = 1; i <= mLevel; i++) {
         int32_t index = levelToFruitIndex(i);
         if (index != -1) {
-            imgs[cnt] = s_fruit[index].fruit;
+            imgs[cnt] = sFruitTable[index].fruit;
             cnt = (cnt + 1) % 7;
             if (total < 7) total++;
         }
@@ -832,245 +841,9 @@ void game::drawLevel() {
     uint32_t x = 210;
     uint32_t start = cnt % (total ? total : 1);
     for (uint32_t i = 0; i < total; i++) {
-        drawBitmap(x, 250, s_fruit_img.bmp[imgs[start]], s_fruit_img.width, s_fruit_img.height);
+        drawBitmap(x, 250, sFruitImg.bmp[imgs[start]], sFruitImg.width, sFruitImg.height);
         start = (start + 1) % 7;
-        x -= s_fruit_img.width + 2;
-    }
-}
-
-// ============================================================
-// Main frame logic (ported from original run_frame)
-// ============================================================
-
-void game::runFrame() {
-    // Death sequence uses mStateTimer to track progress:
-    //   0..59:  freeze (1 sec), everything visible
-    //   60:     start death sound + animation
-    //   60+:    animation plays, wait for sound to finish, then transition
-    if (mPacDead != 0) {
-        mStateTimer++;
-
-        if (mStateTimer == 20) {
-            // Play death sound ~170ms before animation starts
-            mSound.playTrack(SND_DEATH);
-        }
-
-        if (mStateTimer <= 30) {
-            // Phase 1: frozen for ~0.5 second, don't touch mPacDead
-            return;
-        }
-
-        // Phase 2: run animation (mPacDead counts down from its initial value)
-        if (mPacDead > 1) {
-            mPacDead--;
-            return;
-        }
-
-        // Phase 3: animation done, wait for sound to finish
-        if (mSound.isTrackPlaying(SND_DEATH)) {
-            return;
-        }
-
-        // Phase 4: 1 second pause after death before resuming
-        // Use mPacDead == 1 as "waiting for post-death delay"
-        // Hijack mStateTimer for the countdown (reset it once)
-        if (mPacDead == 1) {
-            mPacDead = -60;  // negative = post-death delay counter
-            return;
-        }
-        if (mPacDead < -1) {
-            mPacDead++;
-            return;
-        }
-
-        // Done — transition (mPacDead == -1)
-        mPacDead = 0;
-        if (mLives) mLives--;
-        if (mLives == 0) {
-            mGameMode = GAMEMODE_GAMEOVER;
-            mStateTimer = 0;
-        } else {
-            // Reset pac-man and ghosts to starting positions
-            mPacX = 112; mPacY = 188; mPacDir = DIR_LEFT;
-            mPacFrame = 6;  // mouth closed
-            mCherry = false; mCherryTimer = 0;
-            mEnergizerTimer = 0;
-            initGhost(BLINKY, 112, 88, 0, 0, false, 0);
-            initGhost(PINKY,  112, 96, 0, 4, false, 0);
-            initGhost(INKY,   112, 96, 0, 255, false, 0);
-            initGhost(CLYDE,  112, 96, 0, 255, false, 0);
-            mGameMode = GAMEMODE_READY;
-            mStateTimer = 0;  // no start sound; READY shows for 1 sec
-        }
-        return;
-    }
-
-    // Eating ghost pause
-    if (mPacEatGhost > 0) {
-        mPacEatGhost--;
-        return;
-    }
-
-    // Check food/energizer at pacman position
-    uint8_t temp = mMap[mPacY >> 3][mPacX >> 3];
-    if (temp == TILE_FOOD) {
-        mMap[mPacY >> 3][mPacX >> 3] = TILE_EMPTY;
-        mScore += 10;
-        mSound.playTrack(SND_CHOMP);
-        eatFood();
-    } else if (temp == TILE_ENERGIZER) {
-        mMap[mPacY >> 3][mPacX >> 3] = TILE_EMPTY;
-        mScore += 50;
-        frighten(BLINKY); frighten(INKY); frighten(PINKY); frighten(CLYDE);
-        reverseDirection(BLINKY); reverseDirection(INKY); reverseDirection(PINKY); reverseDirection(CLYDE);
-        mEnergizerTimer = ENERGY_LENGTH;
-        mSound.stopTrack(SND_SIREN);
-        mSound.playTrack(SND_FRIGHTENED);
-        eatFood();
-    } else if (mCherry && mPacX == 112 && mPacY == 140) {
-        int32_t index = levelToFruitIndex(mLevel);
-        if (index != -1) mScore += s_fruit[index].score;
-        mCherry = false;
-        mCherryTimer = 75;
-        mSound.playTrack(SND_EAT_FRUIT);
-    } else {
-        // Movement
-        bool tunnel = inTunnel(mPacX, mPacY);
-        int32_t a, b;
-        uint8_t tmod = (mPacY + 4) % 8;
-        bool corner = (tmod < mCornering) || (tmod > 8 - mCornering);
-
-        if ((mKeyRight && corner) || (mPacDir == DIR_RIGHT)) {
-            a = wrapMapY(mPacY >> 3);
-            b = wrapMapX((mPacX + mBoundary) >> 3);
-            if (mMap[a][b] != TILE_WALL) {
-                mPacX++; mPacDir = DIR_RIGHT; mPacFrame++; snapY();
-            }
-        }
-        if ((mKeyLeft && corner) || (mPacDir == DIR_LEFT)) {
-            a = wrapMapY(mPacY >> 3);
-            b = wrapMapX((mPacX - mBoundary) >> 3);
-            if (mMap[a][b] != TILE_WALL) {
-                mPacX--; mPacDir = DIR_LEFT; mPacFrame++; snapY();
-            }
-        }
-        tmod = (mPacX + 4) % 8;
-        if ((mKeyDown && corner && !tunnel) || (mPacDir == DIR_DOWN)) {
-            a = wrapMapY((mPacY + mBoundary) >> 3);
-            b = wrapMapX(mPacX >> 3);
-            if (mMap[a][b] != TILE_WALL) {
-                mPacY++; mPacDir = DIR_DOWN; mPacFrame++; snapX();
-            }
-        }
-        if ((mKeyUp && corner && !tunnel) || (mPacDir == DIR_UP)) {
-            a = wrapMapY((mPacY - mBoundary) >> 3);
-            b = wrapMapX(mPacX >> 3);
-            if (mMap[a][b] != TILE_WALL) {
-                mPacY--; mPacDir = DIR_UP; mPacFrame++; snapX();
-            }
-        }
-        mPacX = wrap(mPacX);
-        mPacY = limit(mPacY);
-    }
-
-    // Energizer timer
-    if (!mEnergizerTimer) {
-        mPacGhostCounter = 0;
-    } else {
-        mEnergizerTimer--;
-        if (mEnergizerTimer == 0) {
-            // Fright ended — switch back to siren
-            mSound.stopTrack(SND_FRIGHTENED);
-            mSound.stopTrack(SND_GHOST_EYES);
-            mSound.playTrack(SND_SIREN);
-        }
-    }
-
-    // Process ghosts
-    processGhost(BLINKY);
-    processGhost(INKY);
-    processGhost(PINKY);
-    processGhost(CLYDE);
-
-    // Update high score
-    if (mScore > mHighScore) mHighScore = mScore;
-
-    // Level complete check
-    if (mFoodEaten >= TOTAL_DOTS) {
-        mGameMode = GAMEMODE_LEVEL_COMPLETE;
-        mStateTimer = 0;
-    }
-
-    mGhostFrame = (mGhostFrame + 1) % (8 * 2);
-    mPacFrame = mPacFrame % (3 * 3);
-}
-
-// ============================================================
-// Game state machine (run)
-// ============================================================
-
-void game::run() {
-    readInput();
-    mFrameCounter++;
-
-    switch (mGameMode) {
-        case GAMEMODE_ATTRACT:
-            if (mKeyStart) {
-                initLevel(true);
-                mSound.stopAllTracks();
-                mSound.playTrack(SND_START);
-                mGameMode = GAMEMODE_READY;
-                mStateTimer = 0;
-            }
-            break;
-
-        case GAMEMODE_READY:
-            mStateTimer++;
-            // Phase 1: wait for start.wav to finish
-            // Phase 2: wait 1 second (60 frames) after it ends
-            if (mSound.isTrackPlaying(SND_START)) {
-                mStateTimer = 0;  // reset delay counter while sound plays
-            } else if (mStateTimer > 60) {
-                mGameMode = GAMEMODE_PLAYING;
-                mSound.playTrack(SND_SIREN);
-            }
-            break;
-
-        case GAMEMODE_PLAYING:
-            runFrame();
-            break;
-
-        case GAMEMODE_DEAD:
-            // handled inside runFrame via mPacDead
-            runFrame();
-            break;
-
-        case GAMEMODE_LEVEL_COMPLETE:
-            mStateTimer++;
-            if (mStateTimer == 1) {
-                mSound.stopAllTracks();
-            }
-            if (mStateTimer > 180) { // 3 seconds
-                mLevel++;
-                initLevel(false);
-                mSound.playTrack(SND_START);
-                mGameMode = GAMEMODE_READY;
-                mStateTimer = 0;
-            }
-            break;
-
-        case GAMEMODE_GAMEOVER:
-            mStateTimer++;
-            if (mStateTimer == 1) {
-                mSound.stopAllTracks();
-            }
-            if (mKeyStart && mStateTimer > 60) {
-                initLevel(true);
-                mSound.playTrack(SND_START);
-                mGameMode = GAMEMODE_READY;
-                mStateTimer = 0;
-            }
-            break;
+        x -= sFruitImg.width + 2;
     }
 }
 
@@ -1080,17 +853,15 @@ void game::run() {
 
 void game::draw() {
     renderer::setBlendAdditive(true);
+    entityPacman* pac = getPacman();
 
     switch (mGameMode) {
         case GAMEMODE_ATTRACT:
         {
-            // Draw maze and "PRESS START" text
             drawBackground();
             renderer::sortBarrier();
             drawStr(60, 140, "VECTOR PAC-MAN");
             drawStr(72, 170, "PRESS START");
-
-            // Animate ghost frame for energizer blink
             mGhostFrame = (mGhostFrame + 1) % (8 * 2);
             break;
         }
@@ -1101,7 +872,6 @@ void game::draw() {
             renderer::sortBarrier();
             drawLevel();
             drawLives();
-            // Draw dots
             for (uint32_t j = 0; j < 31; j++) {
                 for (uint32_t i = 0; i < 28; i++) {
                     if (mMap[j][i] == TILE_FOOD) drawDot(i << 3, j << 3);
@@ -1109,15 +879,10 @@ void game::draw() {
                         drawBitmap(i << 3, j << 3, s_energizer, 9, 9);
                 }
             }
-            // "READY!" in yellow from the start of the song
             drawReadyText();
-            // Show pac-man and ghosts at 3/4 of start.wav
             if (mSound.getTrackProgress(SND_START) >= 0.75f || !mSound.isTrackPlaying(SND_START)) {
-                drawGhost(BLINKY);
-                drawGhost(PINKY);
-                drawGhost(INKY);
-                drawGhost(CLYDE);
-                drawBitmap(mPacX - 6, mPacY - 6, s_pacman_img.bmp[mPacDir][mPacFrame / 3], s_pacman_img.width, s_pacman_img.height);
+                mEnemies->draw();
+                mPlayers->draw();
             }
             break;
         }
@@ -1129,27 +894,27 @@ void game::draw() {
             drawLevel();
             drawLives();
 
-            if (mPacDead != 0) {
-                if (mPacDead < 0 || mPacDead == 1) {
-                    // Post-animation / waiting for sound: empty maze only
+            if (pac->getDead() != 0) {
+                if (pac->getDead() < 0 || pac->getDead() == 1) {
+                    // Post-animation: empty maze only
                 } else if (mStateTimer <= 30) {
-                    // Phase 1 freeze: draw pac-man + ghosts standing still
-                    drawGhost(BLINKY);
-                    drawGhost(PINKY);
-                    drawGhost(INKY);
-                    drawGhost(CLYDE);
-                    drawBitmap(mPacX - 6, mPacY - 6, s_pacman_img.bmp[mPacDir][mPacFrame / 3], s_pacman_img.width, s_pacman_img.height);
+                    // Phase 1 freeze
+                    mEnemies->draw();
+                    mPlayers->draw();
                 } else {
                     // Phase 2: death animation
-                    int frame = (75 - mPacDead) * 13 / 75;
+                    int frame = (75 - pac->getDead()) * 13 / 75;
                     if (frame < 0) frame = 0;
                     if (frame > 12) frame = 12;
-                    drawBitmap(mPacX - 7, mPacY - 7, s_pacdead_img.bmp[frame], s_pacdead_img.width, s_pacdead_img.height);
+                    drawBitmap(pac->getX() - 7, pac->getY() - 7,
+                               sPacDeadImg.bmp[frame], sPacDeadImg.width, sPacDeadImg.height);
                 }
                 break;
-            } else if (mPacEatGhost > 0) {
-                if (mPacGhostCounter)
-                    drawBitmap(mPacX - 8, mPacY - 4, s_ghostcounter_img.bmp[mPacGhostCounter - 1], s_ghostcounter_img.width, s_ghostcounter_img.height);
+            } else if (pac->getEatGhost() > 0) {
+                if (pac->getGhostCounter())
+                    drawBitmap(pac->getX() - 8, pac->getY() - 4,
+                               sGhostCounterImg.bmp[pac->getGhostCounter() - 1],
+                               sGhostCounterImg.width, sGhostCounterImg.height);
             } else {
                 // Draw dots
                 renderer::setPointSize(3.0f);
@@ -1162,36 +927,21 @@ void game::draw() {
                 }
                 renderer::setPointSize(1.0f);
 
-                // Cherry/fruit
-                if (mCherry) {
-                    int32_t index = levelToFruitIndex(mLevel);
-                    if (index != -1)
-                        drawBitmap(108, 134, s_fruit_img.bmp[s_fruit[index].fruit], s_fruit_img.width, s_fruit_img.height);
-                }
-                if (mCherryTimer) {
-                    int32_t index = levelToFruitIndex(mLevel);
-                    if (index != -1)
-                        drawBitmap(106, 137, s_fruit[index].score_bmp, s_fruit[index].width, s_fruit[index].height);
-                    mCherryTimer--;
-                }
+                // Fruit
+                mFruit->draw();
 
                 // Ghosts
-                drawGhost(BLINKY);
-                drawGhost(PINKY);
-                drawGhost(INKY);
-                drawGhost(CLYDE);
+                mEnemies->draw();
 
                 // Pac-Man
-                drawBitmap(mPacX - 6, mPacY - 6, s_pacman_img.bmp[mPacDir][mPacFrame / 3], s_pacman_img.width, s_pacman_img.height);
+                mPlayers->draw();
             }
             break;
         }
 
         case GAMEMODE_LEVEL_COMPLETE:
         {
-            // Flash maze
             if ((mStateTimer >> 4) & 1) {
-                // Draw maze in white
                 uint32_t cnt = 0;
                 uint32_t nbrPoly = s_background[cnt++];
                 renderer::setLineWidth(2.0f);
@@ -1208,7 +958,7 @@ void game::draw() {
                 renderer::setLineWidth(1.0f);
             } else {
                 drawBackground();
-            renderer::sortBarrier();
+                renderer::sortBarrier();
             }
             break;
         }
@@ -1219,10 +969,11 @@ void game::draw() {
             renderer::sortBarrier();
             drawLevel();
             drawLives();
-            if (mPacDead > 15) {
-                int frame = 15 - mPacDead / 5;
+            if (pac->getDead() > 15) {
+                int frame = 15 - pac->getDead() / 5;
                 if (frame >= 0 && frame < 13)
-                    drawBitmap(mPacX - 7, mPacY - 7, s_pacdead_img.bmp[frame], s_pacdead_img.width, s_pacdead_img.height);
+                    drawBitmap(pac->getX() - 7, pac->getY() - 7,
+                               sPacDeadImg.bmp[frame], sPacDeadImg.width, sPacDeadImg.height);
             }
             break;
         }
@@ -1231,7 +982,6 @@ void game::draw() {
         {
             drawBackground();
             renderer::sortBarrier();
-            // Draw remaining dots
             for (uint32_t j = 0; j < 31; j++) {
                 for (uint32_t i = 0; i < 28; i++) {
                     if (mMap[j][i] == TILE_FOOD) drawDot(i << 3, j << 3);
@@ -1240,14 +990,15 @@ void game::draw() {
                 }
             }
             drawLives();
-            // Show ghosts in attract poses
-            drawBitmap(122, 110, s_ghost_img.bmp[CLYDE][DIR_UP], s_ghost_img.width, s_ghost_img.height);
-            drawBitmap(106, 110, s_ghost_img.bmp[PINKY][DIR_DOWN], s_ghost_img.width, s_ghost_img.height);
-            drawBitmap(90, 110, s_ghost_img.bmp[INKY][DIR_UP], s_ghost_img.width, s_ghost_img.height);
-            drawBitmap(106, 85, s_ghost_img.bmp[BLINKY][DIR_LEFT], s_ghost_img.width, s_ghost_img.height);
+            // Show ghosts in attract poses using entity positions
+            drawBitmap(122, 110, sGhostImg.bmp[3][DIR_UP], sGhostImg.width, sGhostImg.height);
+            drawBitmap(106, 110, sGhostImg.bmp[1][DIR_DOWN], sGhostImg.width, sGhostImg.height);
+            drawBitmap(90, 110, sGhostImg.bmp[2][DIR_UP], sGhostImg.width, sGhostImg.height);
+            drawBitmap(106, 85, sGhostImg.bmp[0][DIR_LEFT], sGhostImg.width, sGhostImg.height);
             drawStr(74, 143, "GAME OVER");
             mGhostFrame = (mGhostFrame + 1) % (8 * 2);
             break;
         }
     }
+
 }

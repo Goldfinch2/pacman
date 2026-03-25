@@ -11,9 +11,12 @@
 
 CXX = g++
 
+DVG_UTILS = ../dvg_utils
+
 CXXFLAGS_COMMON = -std=c++17 -O2 -Wall \
            -Wno-unused-variable -Wno-unused-but-set-variable \
            -Wno-write-strings \
+           -I$(DVG_UTILS) \
            $(shell sdl2-config --cflags)
 
 CXXFLAGS_SDL = $(CXXFLAGS_COMMON)
@@ -27,15 +30,32 @@ SRCS = \
 	main.cpp \
 	renderer.cpp \
 	renderer_dvg.cpp \
-	dvg_serial_linux.cpp \
 	settings.cpp \
 	sound.cpp \
-	game.cpp
+	game.cpp \
+	entity.cpp \
+	entityPacman.cpp \
+	entityGhost.cpp \
+	entityBlinky.cpp \
+	entityPinky.cpp \
+	entityInky.cpp \
+	entityClyde.cpp \
+	entityFruit.cpp \
+	enemies.cpp \
+	players.cpp \
+	controls.cpp \
+	scene.cpp
+
+# dvg_utils sources (DVG build only)
+DVG_UTILS_SRCS = \
+	$(DVG_UTILS)/dvg_cmd.cpp \
+	$(DVG_UTILS)/dvg_serial_linux.cpp
 
 OBJDIR_SDL = obj_sdl
 OBJDIR_DVG = obj_dvg
 OBJS_SDL = $(patsubst %.cpp,$(OBJDIR_SDL)/%.o,$(SRCS))
-OBJS_DVG = $(patsubst %.cpp,$(OBJDIR_DVG)/%.o,$(SRCS))
+OBJS_DVG = $(patsubst %.cpp,$(OBJDIR_DVG)/%.o,$(SRCS)) \
+           $(patsubst $(DVG_UTILS)/%.cpp,$(OBJDIR_DVG)/dvg_utils_%.o,$(DVG_UTILS_SRCS))
 
 all: sdl dvg
 
@@ -59,6 +79,9 @@ $(OBJDIR_SDL)/%.o: %.cpp
 	$(CXX) $(CXXFLAGS_SDL) -c $< -o $@
 
 $(OBJDIR_DVG)/%.o: %.cpp
+	$(CXX) $(CXXFLAGS_DVG) -c $< -o $@
+
+$(OBJDIR_DVG)/dvg_utils_%.o: $(DVG_UTILS)/%.cpp
 	$(CXX) $(CXXFLAGS_DVG) -c $< -o $@
 
 clean:

@@ -11,6 +11,7 @@ namespace renderer
 {
     static SDL_GLContext glContext = nullptr;
     static SDL_Window*   gWindow  = nullptr;
+    static int           gScreenW, gScreenH;
 
     // ---------------------------------------------------------------
     // Lifecycle
@@ -81,14 +82,12 @@ namespace renderer
 
     void enable2D(int screenW, int screenH)
     {
-        // Visible area: X=0..225, Y=-28..270
-        // -28..0 = score text area above maze
-        // 0..248 = maze
-        // 248..270 = lives/fruit area below maze
-        static const float TOP = -28.0f;
-        static const float BOTTOM = 270.0f;
+        gScreenW = screenW;
+        gScreenH = screenH;
         static const float LEFT = 0.0f;
         static const float RIGHT = (float)PACMAN_MAX_X;
+        static const float TOP = -28.0f;
+        static const float BOTTOM = 270.0f;
 
         float gameW = RIGHT - LEFT;
         float gameH = BOTTOM - TOP;
@@ -118,7 +117,6 @@ namespace renderer
 
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
-        // Y flipped: top = TOP, bottom = BOTTOM
         glOrtho(LEFT, RIGHT, BOTTOM, TOP, -1, 1);
 
         glMatrixMode(GL_MODELVIEW);

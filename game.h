@@ -21,25 +21,11 @@ enum {
 // Directions
 enum { DIR_RIGHT, DIR_LEFT, DIR_UP, DIR_DOWN };
 
-// Ghost IDs
-enum { BLINKY, PINKY, INKY, CLYDE, MAX_GHOSTS };
-
 // Tile types
 enum { TILE_EMPTY, TILE_WALL, TILE_FOOD, TILE_ENERGIZER };
 
 // Fruit types
 enum { CHERRY, STRAWBERRY, PEAR, APPLE, JACK, EAGLE, BELL, KEY };
-
-// Ghost modes
-enum { GHOST_NORMAL, GHOST_DEAD, GHOST_RELEASED, GHOST_TRAPPED };
-
-struct Ghost {
-    int32_t x, y;
-    uint32_t dir;
-    uint32_t mode;
-    bool scared;
-    uint32_t speed;
-};
 
 struct FruitInfo {
     uint32_t min_level, max_level;
@@ -48,6 +34,41 @@ struct FruitInfo {
     uint32_t width, height;
     uint32_t* score_bmp;
 };
+
+// Image structure types (used by entities for self-drawing)
+struct pacman_img_t {
+    uint32_t width, height;
+    uint32_t *bmp[4][3];
+};
+
+struct pacdead_img_t {
+    uint32_t width, height;
+    uint32_t *bmp[13];
+};
+
+struct fruit_img_t {
+    uint32_t width, height;
+    uint32_t *bmp[8];
+};
+
+struct ghost_img_t {
+    uint32_t width, height;
+    uint32_t *bmp[4][4];
+};
+
+struct ghost_counter_img_t {
+    uint32_t width, height;
+    uint32_t *bmp[4];
+};
+
+// Forward declarations
+class controls;
+class players;
+class enemies;
+class entityPacman;
+class entityGhost;
+class entityBlinky;
+class entityFruit;
 
 class game
 {
@@ -68,79 +89,77 @@ public:
     void run();
     void draw();
 
-    sound mSound;
+    // Subsystems (public for entity access, matching opengw pattern)
+    sound      mSound;
+    controls*  mControls;
+    players*   mPlayers;
+    enemies*   mEnemies;
+    entityFruit* mFruit;
 
-    static GameMode mGameMode;
+    // Accessors for entities
+    entityPacman* getPacman();
+    entityBlinky* getBlinky();
+    entityGhost*  getGhost(int index);
 
-private:
-    // Game state
-    Ghost mGhosts[MAX_GHOSTS];
-    uint8_t mMap[MAZE_ROWS][MAZE_COLS];
-    int32_t mPacX, mPacY;
-    uint32_t mPacDir;
-    uint32_t mPacFrame;
-    uint32_t mFoodEaten;
-    int32_t  mPacDead;
-    uint32_t mPacEatGhost;
-    uint32_t mPacGhostCounter;
-    uint32_t mGlobalMode;
-    bool mCherry;
-    uint32_t mCherryTimer;
+    // Public game state (entities need read/write access)
+    uint8_t  mMap[MAZE_ROWS][MAZE_COLS];
+    uint32_t mGlobalMode;       // 0=scatter, 1=chase
     uint32_t mEnergizerTimer;
     uint32_t mScore;
     uint32_t mHighScore;
     uint32_t mLevel;
     uint32_t mLives;
+    uint32_t mFoodEaten;
     uint32_t mGhostFrame;
     uint32_t mBoundary;
     uint32_t mCornering;
-    uint32_t mStateTimer;
     uint32_t mFrameCounter;
+    uint32_t mStateTimer;
 
-    // Bitmap compositing buffer
-    uint32_t mBmpBuf[32 * 8 * 8];
+    static GameMode mGameMode;
 
-    // Private methods
-    void initLevel(bool fullReset);
-    void initGhost(uint32_t ghost, uint32_t x, uint32_t y, uint32_t dir, uint32_t mode, bool scared, uint32_t speed);
-    void resetGhost(uint32_t ghost, uint32_t time);
+    // Sprite tables (public static for entity self-drawing)
+    static ghost_img_t         sGhostImg;
+    static ghost_img_t         sGhostDeadImg;
+    static ghost_img_t         sGhostScaredImg;
+    static pacman_img_t        sPacmanImg;
+    static pacdead_img_t       sPacDeadImg;
+    static fruit_img_t         sFruitImg;
+    static ghost_counter_img_t sGhostCounterImg;
 
-    void runFrame();
-    void processGhost(uint32_t ghost);
-    void frighten(uint32_t ghost);
-    void reverseDirection(uint32_t ghost);
-    void eatFood();
-
-    // Rendering
-    void drawBitmap(int32_t px, int32_t py, uint32_t* list, uint32_t width, uint32_t height);
-    void drawBackground();
-    void drawDot(int32_t px, int32_t py);
-    void drawGhost(uint32_t ghost);
-    void drawScore();
-    void drawLives();
-    void drawLevel();
-    void drawStr(int32_t px, int32_t py, const char* str);
-    void drawColorStr(int32_t px, int32_t py, const char* str, uint32_t color);
-    void drawReadyText();
-
-    // Helpers
+    // Map / coordinate helpers (public for entity use)
     int32_t wrapMapX(int32_t x);
     int32_t wrapMapY(int32_t y);
     int32_t wrap(int32_t x);
     int32_t limit(int32_t y);
-    bool inTunnel(uint32_t x, uint32_t y);
-    void snapX();
-    void snapY();
+    bool    inTunnel(uint32_t x, uint32_t y);
     int32_t xDir(uint32_t a);
     int32_t yDir(uint32_t a);
+
+    // Drawing utilities (public for potential entity use)
+    void drawBitmap(int32_t px, int32_t py, uint32_t* list, uint32_t width, uint32_t height);
+    void drawStr(int32_t px, int32_t py, const char* str);
+    void drawColorStr(int32_t px, int32_t py, const char* str, uint32_t color);
     int32_t levelToFruitIndex(uint32_t level);
 
-    // Input
-    bool mKeyRight, mKeyLeft, mKeyUp, mKeyDown;
-    bool mKeyStart, mKeyCoin;
-    void readInput();
-};
+    static FruitInfo sFruitTable[];
 
-extern game theGame;
+private:
+    void initLevel(bool fullReset);
+    void runFrame();
+    void eatFood();
+    void checkCollisions();
+
+    // Rendering
+    void drawBackground();
+    void drawDot(int32_t px, int32_t py);
+    void drawScore();
+    void drawLives();
+    void drawLevel();
+    void drawReadyText();
+
+    // Bitmap compositing buffer
+    uint32_t mBmpBuf[32 * 8 * 8];
+};
 
 #endif // GAME_H

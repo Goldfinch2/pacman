@@ -28,7 +28,19 @@ SRCS = \
 	renderer_dvg.cpp \
 	settings.cpp \
 	sound.cpp \
-	game.cpp
+	game.cpp \
+	entity.cpp \
+	entityPacman.cpp \
+	entityGhost.cpp \
+	entityBlinky.cpp \
+	entityPinky.cpp \
+	entityInky.cpp \
+	entityClyde.cpp \
+	entityFruit.cpp \
+	enemies.cpp \
+	players.cpp \
+	controls.cpp \
+	scene.cpp
 
 OBJDIR = obj_win
 OBJS   = $(patsubst %.cpp,$(OBJDIR)/%.o,$(SRCS))

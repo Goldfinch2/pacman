@@ -1,11 +1,9 @@
 #include "defines.h"
-#include "game.h"
+#include "scene.hpp"
 #include "renderer.h"
 #include "settings.h"
 #include "SDL.h"
 #include <time.h>
-
-game theGame;
 
 static SDL_Window* g_window = nullptr;
 
@@ -13,7 +11,7 @@ int main(int argc, char* argv[])
 {
     settings::load();
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
@@ -29,13 +27,13 @@ int main(int argc, char* argv[])
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 #endif
 
-    int screenWidth = 800, screenHeight = 1000;
+    int screenWidth = 0, screenHeight = 0;
 
     g_window = SDL_CreateWindow(
         "Vector Pac-Man",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        screenWidth, screenHeight,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+        0, 0,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP);
 
     if (!g_window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -45,11 +43,12 @@ int main(int argc, char* argv[])
 
     SDL_ShowCursor(SDL_ENABLE);
 
+    SDL_GL_GetDrawableSize(g_window, &screenWidth, &screenHeight);
     renderer::init(g_window, screenWidth, screenHeight);
 
     srand((unsigned int)time(nullptr));
 
-    theGame.init();
+    g_scene.init();
 
     // Main loop
     bool running = true;
@@ -76,11 +75,11 @@ int main(int argc, char* argv[])
             continue;
         lastFrameTime = now;
 
-        theGame.run();
+        g_scene.run();
 
         renderer::beginFrame();
         renderer::enable2D(screenWidth, screenHeight);
-        theGame.draw();
+        g_scene.draw();
         renderer::disable2D();
         renderer::present();
 
@@ -96,6 +95,7 @@ int main(int argc, char* argv[])
         }
     }
 
+    g_scene.shutdown();
     SDL_PauseAudio(1);
     renderer::shutdown();
     SDL_DestroyWindow(g_window);
