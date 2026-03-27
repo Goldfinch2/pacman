@@ -7,13 +7,14 @@
 #   make -f makefile.linux              # builds both pacman_sdl and pacman_dvg
 #   make -f makefile.linux sdl          # SDL/OpenGL renderer only
 #   make -f makefile.linux dvg          # DVG renderer only
+#   make -f makefile.linux install
 #   make -f makefile.linux clean
 
 CXX = g++
 
 DVG_UTILS = ../dvg_utils
 
-CXXFLAGS_COMMON = -std=c++17 -O2 -Wall \
+CXXFLAGS_COMMON = -std=c++17 -O2 -g -Wall \
            -Wno-unused-variable -Wno-unused-but-set-variable \
            -Wno-write-strings \
            -I$(DVG_UTILS) \
@@ -22,7 +23,7 @@ CXXFLAGS_COMMON = -std=c++17 -O2 -Wall \
 CXXFLAGS_SDL = $(CXXFLAGS_COMMON)
 CXXFLAGS_DVG = $(CXXFLAGS_COMMON) -DUSE_DVG_RENDERER
 
-LDFLAGS =
+LDFLAGS = -rdynamic
 LIBS_SDL = $(shell sdl2-config --libs) -lGL -lGLU -lm
 LIBS_DVG = $(shell sdl2-config --libs) -lm
 
@@ -46,16 +47,11 @@ SRCS = \
 	controls.cpp \
 	scene.cpp
 
-# dvg_utils sources (DVG build only)
-DVG_UTILS_SRCS = \
-	$(DVG_UTILS)/dvg_cmd.cpp \
-	$(DVG_UTILS)/dvg_serial_linux.cpp
-
 OBJDIR_SDL = obj_sdl
 OBJDIR_DVG = obj_dvg
-OBJS_SDL = $(patsubst %.cpp,$(OBJDIR_SDL)/%.o,$(SRCS))
-OBJS_DVG = $(patsubst %.cpp,$(OBJDIR_DVG)/%.o,$(SRCS)) \
-           $(patsubst $(DVG_UTILS)/%.cpp,$(OBJDIR_DVG)/dvg_utils_%.o,$(DVG_UTILS_SRCS))
+OBJS_SDL = $(patsubst %.cpp,$(OBJDIR_SDL)/%.o,$(SRCS)) $(OBJDIR_SDL)/advmame_rc.o
+OBJS_DVG = $(patsubst %.cpp,$(OBJDIR_DVG)/%.o,$(SRCS)) $(OBJDIR_DVG)/advmame_rc.o \
+           $(OBJDIR_DVG)/dvg_cmd.o $(OBJDIR_DVG)/dvg_serial_linux.o
 
 all: sdl dvg
 
@@ -78,13 +74,36 @@ pacman_dvg: $(OBJS_DVG)
 $(OBJDIR_SDL)/%.o: %.cpp
 	$(CXX) $(CXXFLAGS_SDL) -c $< -o $@
 
+$(OBJDIR_SDL)/advmame_rc.o: $(DVG_UTILS)/advmame_rc.cpp | $(OBJDIR_SDL)
+	$(CXX) $(CXXFLAGS_SDL) -c $< -o $@
+
 $(OBJDIR_DVG)/%.o: %.cpp
 	$(CXX) $(CXXFLAGS_DVG) -c $< -o $@
 
-$(OBJDIR_DVG)/dvg_utils_%.o: $(DVG_UTILS)/%.cpp
+$(OBJDIR_DVG)/advmame_rc.o: $(DVG_UTILS)/advmame_rc.cpp | $(OBJDIR_DVG)
 	$(CXX) $(CXXFLAGS_DVG) -c $< -o $@
+
+$(OBJDIR_DVG)/dvg_cmd.o: $(DVG_UTILS)/dvg_cmd.cpp | $(OBJDIR_DVG)
+	$(CXX) $(CXXFLAGS_DVG) -c $< -o $@
+
+$(OBJDIR_DVG)/dvg_serial_linux.o: $(DVG_UTILS)/dvg_serial_linux.cpp | $(OBJDIR_DVG)
+	$(CXX) $(CXXFLAGS_DVG) -c $< -o $@
+
+PREFIX  = /usr/local
+DATADIR = $(PREFIX)/share/advance
+
+install: all
+	install -d $(DATADIR)/pacman_dir/sounds
+	install -m 755 pacman_sdl $(DATADIR)
+	install -m 755 pacman_dvg $(DATADIR)
+	install -m 644 pacman.cfg $(DATADIR)
+	install -m 644 sounds/*   $(DATADIR)/pacman_dir/sounds
+	chown -R pi:pi $(DATADIR)
+	chmod -R 775   $(DATADIR)
+	chmod u+s      $(DATADIR)/pacman_sdl
+	chmod u+s      $(DATADIR)/pacman_dvg
 
 clean:
 	rm -rf $(OBJDIR_SDL) $(OBJDIR_DVG) pacman_sdl pacman_dvg
 
-.PHONY: all sdl dvg clean
+.PHONY: all sdl dvg clean install

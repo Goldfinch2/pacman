@@ -55,8 +55,14 @@ static uint32_t g_targetFps = 40;
 //
 static void gameToDvg(float gx, float gy, int32_t* outX, int32_t* outY)
 {
-    *outX = (int32_t)(gx * 4095.0f / 225.0f);
-    *outY = (int32_t)((270.0f - gy) * 4095.0f / 298.0f);
+    // Preserve aspect ratio: scale uniformly, center the shorter axis
+    static const float gameW = 225.0f;
+    static const float gameH = 298.0f;
+    static const float scale = 4095.0f / gameH;  // fit the taller axis
+    static const float offsetX = (4095.0f - gameW * scale) * 0.5f;
+
+    *outX = (int32_t)(gx * scale + offsetX);
+    *outY = (int32_t)((270.0f - gy) * scale);
 
     if (*outX < 0) *outX = 0;
     if (*outX > 4095) *outX = 4095;
@@ -95,9 +101,6 @@ static void getDvgInfo()
 
 static void serialSend()
 {
-    if (settings::sortVectors)
-        g_dvg.sortVectors();
-
     g_dvg.buildFrameCommands();
     g_dvg.sendFrame();
 }
@@ -174,12 +177,6 @@ namespace renderer
         }
 
         g_dvg.beginFrame();
-    }
-
-    void sortBarrier()
-    {
-        if (settings::sortVectors && g_dvg.vecCount() > 1)
-            g_dvg.sortVectors();
     }
 
     void enable2D(int screenW, int screenH)

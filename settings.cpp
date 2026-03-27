@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "advmame_rc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,9 +10,18 @@ namespace settings
     char serialPort[256]  = "";
     char sounds[256]      = "sounds";
     char marquee[256]     = "artwork";
-    bool sortVectors      = true;
+    char advmamerc[256]   = "";
     int  dvgRefreshRate   = 40;
     bool mirror           = false;
+
+    // Default keyboard bindings — overridden by loadAdvmameRC()
+    AdvInputAction upAction    = { {{ AdvInputBinding::KEYBOARD, 0, SDL_SCANCODE_UP    }} };
+    AdvInputAction downAction  = { {{ AdvInputBinding::KEYBOARD, 0, SDL_SCANCODE_DOWN  }} };
+    AdvInputAction leftAction  = { {{ AdvInputBinding::KEYBOARD, 0, SDL_SCANCODE_LEFT  }} };
+    AdvInputAction rightAction = { {{ AdvInputBinding::KEYBOARD, 0, SDL_SCANCODE_RIGHT }} };
+    AdvInputAction startAction = { {{ AdvInputBinding::KEYBOARD, 0, SDL_SCANCODE_RETURN }} };
+    AdvInputAction coinAction  = { {{ AdvInputBinding::KEYBOARD, 0, SDL_SCANCODE_5     }} };
+    AdvInputAction exitAction  = { {{ AdvInputBinding::KEYBOARD, 0, SDL_SCANCODE_ESCAPE }} };
 }
 
 // ─── Config file parser ──────────────────────────────────────────────────────
@@ -47,14 +57,12 @@ static bool sectionActive(Section section)
 
 static void applyKey(const char* key, const char* value)
 {
-    if (strcmp(key, "serial_port") == 0)
-        strncpy(settings::serialPort, value, sizeof(settings::serialPort) - 1);
-    else if (strcmp(key, "sounds") == 0)
+    if (strcmp(key, "sounds") == 0)
         strncpy(settings::sounds, value, sizeof(settings::sounds) - 1);
     else if (strcmp(key, "marquee") == 0)
         strncpy(settings::marquee, value, sizeof(settings::marquee) - 1);
-    else if (strcmp(key, "sort_vectors") == 0)
-        settings::sortVectors = parseBool(value);
+    else if (strcmp(key, "advmamerc") == 0)
+        strncpy(settings::advmamerc, value, sizeof(settings::advmamerc) - 1);
     else if (strcmp(key, "dvg_refresh_rate") == 0)
         settings::dvgRefreshRate = atoi(value);
     else if (strcmp(key, "mirror") == 0)
@@ -67,6 +75,7 @@ void settings::load(const char* filename)
     if (!f)
     {
         fprintf(stderr, "settings: could not open %s, using defaults\n", filename);
+        loadAdvmameRC();
         return;
     }
 
@@ -115,4 +124,42 @@ void settings::load(const char* filename)
 
     fclose(f);
     fprintf(stderr, "settings: loaded %s\n", filename);
+
+    loadAdvmameRC();
+}
+
+void settings::loadAdvmameRC()
+{
+    const char* rcPath = advmamerc[0] ? advmamerc : "/home/pi/.advance/advmame.rc";
+
+    AdvmameRC rc;
+    if (!advmameLoad(rcPath, rc)) {
+        fprintf(stderr, "settings: cannot open '%s', using default bindings\n", rcPath);
+        return;
+    }
+
+#ifdef USE_DVG_RENDERER
+    if (rc.config.isDvgEnabled())
+    {
+        strncpy(serialPort, rc.config.rendererPort.c_str(), sizeof(serialPort) - 1);
+        fprintf(stderr, "settings: serial port from advmame.rc: %s\n", serialPort);
+    }
+#endif
+
+    static const struct { const char* name; AdvInputAction* action; } actionMap[] = {
+        { "p1_up",    &upAction    },
+        { "p1_down",  &downAction  },
+        { "p1_left",  &leftAction  },
+        { "p1_right", &rightAction },
+        { "start1",   &startAction },
+        { "coin1",    &coinAction  },
+        { "ui_cancel",&exitAction  },
+    };
+    for (const auto& m : actionMap) {
+        auto it = rc.inputActions.find(m.name);
+        if (it != rc.inputActions.end())
+            *m.action = it->second;
+    }
+
+    fprintf(stderr, "settings: loaded bindings from '%s'\n", rcPath);
 }

@@ -5,10 +5,32 @@
 #include "SDL.h"
 #include <time.h>
 
+#ifdef __linux__
+#include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
+
+static void crashHandler(int sig)
+{
+    void* frames[32];
+    int   count = backtrace(frames, 32);
+    fprintf(stderr, "\n*** Signal %d — stack trace:\n", sig);
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+#endif
+
 static SDL_Window* g_window = nullptr;
 
 int main(int argc, char* argv[])
 {
+#ifdef __linux__
+    signal(SIGSEGV, crashHandler);
+    signal(SIGABRT, crashHandler);
+    signal(SIGBUS,  crashHandler);
+#endif
+
     settings::load();
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
@@ -29,11 +51,16 @@ int main(int argc, char* argv[])
 
     int screenWidth = 0, screenHeight = 0;
 
+#ifdef USE_DVG_RENDERER
+    Uint32 windowFlags = SDL_WINDOW_FULLSCREEN_DESKTOP;
+#else
+    Uint32 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP;
+#endif
     g_window = SDL_CreateWindow(
         "Vector Pac-Man",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         0, 0,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP);
+        windowFlags);
 
     if (!g_window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());

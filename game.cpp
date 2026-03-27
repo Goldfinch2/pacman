@@ -296,6 +296,10 @@ void game::init()
     mEnemies  = new enemies(*this);
     mFruit    = new entityFruit(*this);
 
+    // Set up initial attract game
+    initLevel(false);
+    mLives = 1;
+
     // Load sounds
     mSound.loadTrack("sounds/start.wav",      SND_START,      0.5f, false);
     mSound.loadTrack("sounds/chomp.wav",       SND_CHOMP,      0.3f, false);
@@ -594,6 +598,18 @@ void game::run() {
                 mSound.playTrack(SND_START);
                 mGameMode = GAMEMODE_READY;
                 mStateTimer = 0;
+                break;
+            }
+
+            runFrame();
+            mSound.stopAllTracks();
+
+            // Intercept any state transitions and restart the attract loop
+            if (mGameMode != GAMEMODE_ATTRACT) {
+                mSound.stopAllTracks();
+                initLevel(false);
+                mLives = 1;
+                mGameMode = GAMEMODE_ATTRACT;
             }
             break;
 
@@ -783,9 +799,30 @@ void game::drawBackground() {
 void game::drawDot(int32_t px, int32_t py) {
     float x = (float)(px + 4);
     float y = (float)(py + 4);
-    renderer::beginPoints();
     renderer::pointVertex(x, y, 1.0f, 0.72f, 0.59f, 1.0f);
+}
+
+void game::drawDotsAndEnergizers() {
+    renderer::setPointSize(3.0f);
+    renderer::beginPoints();
+    for (uint32_t j = 0; j < 31; j++) {
+        if (j & 1) {
+            for (int32_t i = 27; i >= 0; i--)
+                if (mMap[j][i] == TILE_FOOD) drawDot(i << 3, j << 3);
+        } else {
+            for (uint32_t i = 0; i < 28; i++)
+                if (mMap[j][i] == TILE_FOOD) drawDot(i << 3, j << 3);
+        }
+    }
     renderer::endPoints();
+    renderer::setPointSize(1.0f);
+
+    for (uint32_t j = 0; j < 31; j++) {
+        for (uint32_t i = 0; i < 28; i++) {
+            if (mMap[j][i] == TILE_ENERGIZER && mGhostFrame > 5)
+                drawBitmap(i << 3, j << 3, s_energizer, 9, 9);
+        }
+    }
 }
 
 
@@ -859,26 +896,41 @@ void game::draw() {
         case GAMEMODE_ATTRACT:
         {
             drawBackground();
-            renderer::sortBarrier();
-            drawStr(60, 140, "VECTOR PAC-MAN");
-            drawStr(72, 170, "PRESS START");
-            mGhostFrame = (mGhostFrame + 1) % (8 * 2);
+            drawDotsAndEnergizers();
+            mFruit->draw();
+
+            if (pac->getDead() != 0) {
+                if (pac->getDead() > 0 && mStateTimer > 30) {
+                    // Death animation
+                    int frame = (75 - pac->getDead()) * 13 / 75;
+                    if (frame < 0) frame = 0;
+                    if (frame > 12) frame = 12;
+                    drawBitmap(pac->getX() - 7, pac->getY() - 7,
+                               sPacDeadImg.bmp[frame], sPacDeadImg.width, sPacDeadImg.height);
+                } else {
+                    mEnemies->draw();
+                    mPlayers->draw();
+                }
+            } else {
+                mEnemies->draw();
+                mPlayers->draw();
+            }
+
+            // Text overlay
+            drawColorStr(24, 38, "PAC-MAN VECTOR EDITION", 0xffff00);
+            if ((mFrameCounter / 30) % 2 == 0)
+                drawColorStr(68, 258, "INSERT COIN", 0xffffff);
+            drawStr(56, 140, "(C) NAMCO 1980");
             break;
         }
 
         case GAMEMODE_READY:
         {
             drawBackground();
-            renderer::sortBarrier();
+
             drawLevel();
             drawLives();
-            for (uint32_t j = 0; j < 31; j++) {
-                for (uint32_t i = 0; i < 28; i++) {
-                    if (mMap[j][i] == TILE_FOOD) drawDot(i << 3, j << 3);
-                    if (mMap[j][i] == TILE_ENERGIZER && mGhostFrame > 5)
-                        drawBitmap(i << 3, j << 3, s_energizer, 9, 9);
-                }
-            }
+            drawDotsAndEnergizers();
             drawReadyText();
             if (mSound.getTrackProgress(SND_START) >= 0.75f || !mSound.isTrackPlaying(SND_START)) {
                 mEnemies->draw();
@@ -890,7 +942,7 @@ void game::draw() {
         case GAMEMODE_PLAYING:
         {
             drawBackground();
-            renderer::sortBarrier();
+
             drawLevel();
             drawLives();
 
@@ -917,15 +969,7 @@ void game::draw() {
                                sGhostCounterImg.width, sGhostCounterImg.height);
             } else {
                 // Draw dots
-                renderer::setPointSize(3.0f);
-                for (uint32_t j = 0; j < 31; j++) {
-                    for (uint32_t i = 0; i < 28; i++) {
-                        if (mMap[j][i] == TILE_FOOD) drawDot(i << 3, j << 3);
-                        if (mMap[j][i] == TILE_ENERGIZER && mGhostFrame > 5)
-                            drawBitmap(i << 3, j << 3, s_energizer, 9, 9);
-                    }
-                }
-                renderer::setPointSize(1.0f);
+                drawDotsAndEnergizers();
 
                 // Fruit
                 mFruit->draw();
@@ -958,7 +1002,7 @@ void game::draw() {
                 renderer::setLineWidth(1.0f);
             } else {
                 drawBackground();
-                renderer::sortBarrier();
+    
             }
             break;
         }
@@ -966,7 +1010,7 @@ void game::draw() {
         case GAMEMODE_DEAD:
         {
             drawBackground();
-            renderer::sortBarrier();
+
             drawLevel();
             drawLives();
             if (pac->getDead() > 15) {
@@ -981,14 +1025,8 @@ void game::draw() {
         case GAMEMODE_GAMEOVER:
         {
             drawBackground();
-            renderer::sortBarrier();
-            for (uint32_t j = 0; j < 31; j++) {
-                for (uint32_t i = 0; i < 28; i++) {
-                    if (mMap[j][i] == TILE_FOOD) drawDot(i << 3, j << 3);
-                    if (mMap[j][i] == TILE_ENERGIZER && mGhostFrame > 5)
-                        drawBitmap(i << 3, j << 3, s_energizer, 9, 9);
-                }
-            }
+
+            drawDotsAndEnergizers();
             drawLives();
             // Show ghosts in attract poses using entity positions
             drawBitmap(122, 110, sGhostImg.bmp[3][DIR_UP], sGhostImg.width, sGhostImg.height);

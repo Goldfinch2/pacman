@@ -26,4 +26,7 @@ class entityPacman : public entity
     int32_t  mDead;
     uint32_t mEatGhost;
     uint32_t mGhostCounter;
+    uint32_t mAiDesiredDir;   // attract-mode AI: desired next direction
+
+    void updateAiDir();       // greedy dot-seeking AI
 };

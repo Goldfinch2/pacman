@@ -19,7 +19,7 @@ enum {
 };
 
 // Directions
-enum { DIR_RIGHT, DIR_LEFT, DIR_UP, DIR_DOWN };
+enum { DIR_RIGHT, DIR_LEFT, DIR_UP, DIR_DOWN, DIR_NONE };
 
 // Tile types
 enum { TILE_EMPTY, TILE_WALL, TILE_FOOD, TILE_ENERGIZER };
@@ -153,6 +153,7 @@ private:
     // Rendering
     void drawBackground();
     void drawDot(int32_t px, int32_t py);
+    void drawDotsAndEnergizers();
     void drawScore();
     void drawLives();
     void drawLevel();

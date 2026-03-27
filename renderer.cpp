@@ -131,11 +131,6 @@ namespace renderer
         glLoadIdentity();
     }
 
-    void sortBarrier()
-    {
-        // No-op for GL renderer
-    }
-
     // ---------------------------------------------------------------
     // State helpers
     // ---------------------------------------------------------------
